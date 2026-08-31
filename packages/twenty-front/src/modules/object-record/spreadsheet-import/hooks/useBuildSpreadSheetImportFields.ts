@@ -4,6 +4,7 @@ import { type FieldMetadataItem } from '@/object-metadata/types/FieldMetadataIte
 import { type EnrichedObjectMetadataItem } from '@/object-metadata/types/EnrichedObjectMetadataItem';
 import { isCompositeFieldType } from '@/object-record/object-filter-dropdown/utils/isCompositeFieldType';
 
+import { SPREADSHEET_IMPORT_RELATION_MATCH_BY_LABEL_AUTO_CREATE_OBJECT_NAME_SINGULARS } from '@/object-record/spreadsheet-import/constants/SpreadsheetImportRelationMatchByLabelAutoCreateObjectNames';
 import { getSpreadSheetFieldValidationDefinitions } from '@/object-record/spreadsheet-import/utils/getSpreadSheetFieldValidationDefinitions';
 import { getRelationConnectSubFieldKey } from '@/object-record/spreadsheet-import/utils/spreadSheetGetRelationConnectSubFieldKey';
 import { getCompositeSubFieldKey } from '@/object-record/spreadsheet-import/utils/spreadsheetImportGetCompositeSubFieldKey';
@@ -249,6 +250,10 @@ export const useBuildSpreadsheetImportFields = () => {
         EnrichedObjectMetadataItem
       >(targetObjectMetadataItem);
 
+      const uniqueConstraintFieldNames = new Set(
+        uniqueConstraintFields.flat().map((field) => field.name),
+      );
+
       //todo - update logic when composite unique indexes will be supported
       for (const uniqueConstraintField of uniqueConstraintFields.flat()) {
         if (isCompositeFieldType(uniqueConstraintField.type)) {
@@ -280,6 +285,46 @@ export const useBuildSpreadsheetImportFields = () => {
             }),
           );
         }
+      }
+
+      const labelFieldMetadataItem = targetObjectMetadataItem.fields.find(
+        (field) =>
+          field.id === targetObjectMetadataItem.labelIdentifierFieldMetadataId,
+      );
+
+      // Only offer "match or create by name" for a plain text label field - a
+      // composite label (e.g. Person's FULL_NAME) has no single column value to
+      // match against here, and would need its own dedicated handling.
+      const canMatchByLabel =
+        isDefined(labelFieldMetadataItem) &&
+        labelFieldMetadataItem.type === FieldMetadataType.TEXT &&
+        !uniqueConstraintFieldNames.has(labelFieldMetadataItem.name);
+
+      if (canMatchByLabel) {
+        spreadsheetImportFields.push(
+          buildSpreadsheetImportField(labelFieldMetadataItem, {
+            Icon: getIcon(fieldMetadataItem.icon),
+            isNestedField: true,
+            isCompositeSubField: false,
+            isRelationConnectField: true,
+            isRelationMatchByLabelField: true,
+            fieldMetadataItemId: fieldMetadataItem.id,
+            fieldMetadataType: FieldMetadataType.RELATION,
+            relationMatchLabelFieldMetadataItem: labelFieldMetadataItem,
+            relationMatchAllowCreateOnNoMatch:
+              SPREADSHEET_IMPORT_RELATION_MATCH_BY_LABEL_AUTO_CREATE_OBJECT_NAME_SINGULARS.has(
+                targetObjectMetadataItem.nameSingular,
+              ),
+            label: `${getRelationConnectSubFieldLabel(
+              fieldMetadataItem,
+              labelFieldMetadataItem,
+            )} (match by name)`,
+            key: `${getRelationConnectSubFieldKey(
+              fieldMetadataItem,
+              labelFieldMetadataItem,
+            )}-matchByLabel`,
+          })[0],
+        );
       }
     }
 

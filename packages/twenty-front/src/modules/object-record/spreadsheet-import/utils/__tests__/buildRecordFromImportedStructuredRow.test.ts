@@ -589,6 +589,120 @@ describe('buildRecordFromImportedStructuredRow', () => {
     });
   });
 
+  it('should connect a relation resolved through relationMatchResolutions ("match by name")', () => {
+    const importedStructuredRow: ImportedStructuredRow = {
+      'name (relationField)-matchByLabel': '  Acme Corp  ',
+    };
+
+    const spreadsheetImportFields = [
+      {
+        fieldMetadataItemId: '6',
+        isNestedField: false,
+        isRelationConnectField: true,
+        isRelationMatchByLabelField: true,
+        label: 'Relation Field / Name (match by name)',
+        key: 'name (relationField)-matchByLabel',
+        fieldMetadataType: FieldMetadataType.RELATION,
+      },
+    ] as SpreadsheetImportField[];
+
+    const relationMatchResolutions = new Map<string, Map<string, string>>([
+      [
+        'name (relationField)-matchByLabel',
+        new Map([['acme corp', 'resolved-record-id']]),
+      ],
+    ]);
+
+    const result = buildRecordFromImportedStructuredRow({
+      importedStructuredRow,
+      fieldMetadataItems: fields,
+      spreadsheetImportFields,
+      relationMatchResolutions,
+    });
+
+    expect(result).toEqual({
+      relationField: {
+        connect: {
+          where: {
+            id: 'resolved-record-id',
+          },
+        },
+      },
+      createdBy: {
+        source: 'IMPORT',
+        context: {},
+      },
+    });
+  });
+
+  it('should leave the relation unset when a "match by name" value has no resolution', () => {
+    const importedStructuredRow: ImportedStructuredRow = {
+      'name (relationField)-matchByLabel': 'Unknown Company',
+    };
+
+    const spreadsheetImportFields = [
+      {
+        fieldMetadataItemId: '6',
+        isNestedField: false,
+        isRelationConnectField: true,
+        isRelationMatchByLabelField: true,
+        label: 'Relation Field / Name (match by name)',
+        key: 'name (relationField)-matchByLabel',
+        fieldMetadataType: FieldMetadataType.RELATION,
+      },
+    ] as SpreadsheetImportField[];
+
+    // Empty resolutions - value was not found and not created (not_found warning case).
+    const relationMatchResolutions = new Map<string, Map<string, string>>([
+      ['name (relationField)-matchByLabel', new Map()],
+    ]);
+
+    const result = buildRecordFromImportedStructuredRow({
+      importedStructuredRow,
+      fieldMetadataItems: fields,
+      spreadsheetImportFields,
+      relationMatchResolutions,
+    });
+
+    expect(result).toEqual({
+      createdBy: {
+        source: 'IMPORT',
+        context: {},
+      },
+    });
+  });
+
+  it('should leave a "match by name" relation unset when relationMatchResolutions is omitted (behaves like an unresolved value)', () => {
+    const importedStructuredRow: ImportedStructuredRow = {
+      'name (relationField)-matchByLabel': 'Acme Corp',
+    };
+
+    const spreadsheetImportFields = [
+      {
+        fieldMetadataItemId: '6',
+        isNestedField: false,
+        isRelationConnectField: true,
+        isRelationMatchByLabelField: true,
+        label: 'Relation Field / Name (match by name)',
+        key: 'name (relationField)-matchByLabel',
+        fieldMetadataType: FieldMetadataType.RELATION,
+      },
+    ] as SpreadsheetImportField[];
+
+    const result = buildRecordFromImportedStructuredRow({
+      importedStructuredRow,
+      fieldMetadataItems: fields,
+      spreadsheetImportFields,
+    });
+
+    expect(result).toEqual({
+      createdBy: {
+        source: 'IMPORT',
+        context: {},
+      },
+    });
+  });
+
   it('should return empty record for empty imported row', () => {
     const importedStructuredRow: ImportedStructuredRow = {};
 

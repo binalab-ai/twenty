@@ -463,4 +463,236 @@ describe('useBuildSpreadSheetImportFields', () => {
       },
     });
   });
+
+  it('should offer a "match by name" field for a relation whose label field is not already a unique constraint, allowing auto-create for an allowlisted target object (company)', () => {
+    const nameField = createMockFieldMetadataItem({
+      id: 'company-name-field',
+      name: 'name',
+      label: 'Name',
+      type: FieldMetadataType.TEXT,
+    });
+
+    const targetObjectMetadata = createMockObjectMetadataItem({
+      id: 'target-object-id',
+      nameSingular: 'company',
+      namePlural: 'companies',
+      labelSingular: 'Company',
+      labelPlural: 'Companies',
+      labelIdentifierFieldMetadataId: 'company-name-field',
+      fields: [
+        createMockFieldMetadataItem({
+          id: 'company-id-field',
+          name: 'id',
+          label: 'ID',
+          type: FieldMetadataType.UUID,
+        }),
+        nameField,
+      ],
+      // getUniqueConstraintsFields always adds the primary key field itself
+      // (found by name === 'id') - no need for an explicit primary-key index here.
+      indexMetadatas: [] as IndexMetadataItem[],
+    });
+
+    const RelationTestWrapper = ({ children }: { children: ReactNode }) => (
+      <JotaiProvider store={jotaiStore}>
+        <JestObjectMetadataItemSetter
+          objectMetadataItems={[targetObjectMetadata]}
+        >
+          {children}
+        </JestObjectMetadataItemSetter>
+      </JotaiProvider>
+    );
+
+    const { result } = renderHook(() => useBuildSpreadsheetImportFields(), {
+      wrapper: RelationTestWrapper,
+    });
+
+    const fieldMetadataItems: FieldMetadataItem[] = [
+      createMockFieldMetadataItem({
+        type: FieldMetadataType.RELATION,
+        name: 'company',
+        label: 'Company',
+        relation: {
+          type: RelationType.MANY_TO_ONE,
+          targetObjectMetadata: {
+            id: 'target-object-id',
+            nameSingular: 'company',
+            namePlural: 'companies',
+          },
+        } as any,
+      }),
+    ];
+
+    const spreadsheetImportFields =
+      result.current.buildSpreadsheetImportFields(fieldMetadataItems);
+
+    // The existing "id" unique-constraint field, plus the new "match by name" field.
+    expect(spreadsheetImportFields).toHaveLength(2);
+
+    const matchByLabelField = spreadsheetImportFields.find(
+      (field) => field.isRelationMatchByLabelField === true,
+    );
+    expect(matchByLabelField).toBeDefined();
+    expect(matchByLabelField).toMatchObject({
+      key: 'name (company)-matchByLabel',
+      label: 'Company / Name (match by name)',
+      isRelationConnectField: true,
+      isRelationMatchByLabelField: true,
+      relationMatchAllowCreateOnNoMatch: true,
+      relationMatchLabelFieldMetadataItem: nameField,
+    });
+  });
+
+  it('should not offer "match by name" auto-create for a target object outside the allowlist', () => {
+    const nameField = createMockFieldMetadataItem({
+      id: 'person-name-field',
+      name: 'name',
+      label: 'Name',
+      type: FieldMetadataType.TEXT,
+    });
+
+    const targetObjectMetadata = createMockObjectMetadataItem({
+      id: 'target-object-id',
+      nameSingular: 'person',
+      namePlural: 'people',
+      labelSingular: 'Person',
+      labelPlural: 'People',
+      labelIdentifierFieldMetadataId: 'person-name-field',
+      fields: [
+        createMockFieldMetadataItem({
+          id: 'person-id-field',
+          name: 'id',
+          label: 'ID',
+          type: FieldMetadataType.UUID,
+        }),
+        nameField,
+      ],
+      indexMetadatas: [],
+    });
+
+    const RelationTestWrapper = ({ children }: { children: ReactNode }) => (
+      <JotaiProvider store={jotaiStore}>
+        <JestObjectMetadataItemSetter
+          objectMetadataItems={[targetObjectMetadata]}
+        >
+          {children}
+        </JestObjectMetadataItemSetter>
+      </JotaiProvider>
+    );
+
+    const { result } = renderHook(() => useBuildSpreadsheetImportFields(), {
+      wrapper: RelationTestWrapper,
+    });
+
+    const fieldMetadataItems: FieldMetadataItem[] = [
+      createMockFieldMetadataItem({
+        type: FieldMetadataType.RELATION,
+        name: 'person',
+        label: 'Person',
+        relation: {
+          type: RelationType.MANY_TO_ONE,
+          targetObjectMetadata: {
+            id: 'target-object-id',
+            nameSingular: 'person',
+            namePlural: 'people',
+          },
+        } as any,
+      }),
+    ];
+
+    const spreadsheetImportFields =
+      result.current.buildSpreadsheetImportFields(fieldMetadataItems);
+
+    const matchByLabelField = spreadsheetImportFields.find(
+      (field) => field.isRelationMatchByLabelField === true,
+    );
+    expect(matchByLabelField).toBeDefined();
+    expect(matchByLabelField?.relationMatchAllowCreateOnNoMatch).toBe(false);
+  });
+
+  it('should not offer a duplicate "match by name" field when the label field is already a unique constraint field', () => {
+    const nameField = createMockFieldMetadataItem({
+      id: 'company-name-field',
+      name: 'name',
+      label: 'Name',
+      type: FieldMetadataType.TEXT,
+    });
+
+    const targetObjectMetadata = createMockObjectMetadataItem({
+      id: 'target-object-id',
+      nameSingular: 'company',
+      namePlural: 'companies',
+      labelSingular: 'Company',
+      labelPlural: 'Companies',
+      labelIdentifierFieldMetadataId: 'company-name-field',
+      fields: [
+        createMockFieldMetadataItem({
+          id: 'company-id-field',
+          name: 'id',
+          label: 'ID',
+          type: FieldMetadataType.UUID,
+        }),
+        nameField,
+      ],
+      indexMetadatas: [
+        {
+          id: 'unique-name-index',
+          name: 'uniqueNameIndex',
+          createdAt: '2023-01-01',
+          updatedAt: '2023-01-01',
+          isUnique: true,
+          indexFieldMetadatas: [
+            {
+              id: 'index-field-1',
+              fieldMetadataId: 'company-name-field',
+              createdAt: '2023-01-01',
+              updatedAt: '2023-01-01',
+              order: 0,
+            },
+          ],
+        },
+      ] as IndexMetadataItem[],
+    });
+
+    const RelationTestWrapper = ({ children }: { children: ReactNode }) => (
+      <JotaiProvider store={jotaiStore}>
+        <JestObjectMetadataItemSetter
+          objectMetadataItems={[targetObjectMetadata]}
+        >
+          {children}
+        </JestObjectMetadataItemSetter>
+      </JotaiProvider>
+    );
+
+    const { result } = renderHook(() => useBuildSpreadsheetImportFields(), {
+      wrapper: RelationTestWrapper,
+    });
+
+    const fieldMetadataItems: FieldMetadataItem[] = [
+      createMockFieldMetadataItem({
+        type: FieldMetadataType.RELATION,
+        name: 'company',
+        label: 'Company',
+        relation: {
+          type: RelationType.MANY_TO_ONE,
+          targetObjectMetadata: {
+            id: 'target-object-id',
+            nameSingular: 'company',
+            namePlural: 'companies',
+          },
+        } as any,
+      }),
+    ];
+
+    const spreadsheetImportFields =
+      result.current.buildSpreadsheetImportFields(fieldMetadataItems);
+
+    // The "id" and unique-constraint "name" fields - no separate "match by name" field.
+    expect(spreadsheetImportFields).toHaveLength(2);
+    expect(
+      spreadsheetImportFields.some(
+        (field) => field.isRelationMatchByLabelField === true,
+      ),
+    ).toBe(false);
+  });
 });

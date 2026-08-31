@@ -26,6 +26,10 @@ type BuildRecordFromImportedStructuredRowArgs = {
   importedStructuredRow: ImportedStructuredRow;
   fieldMetadataItems: FieldMetadataItem[];
   spreadsheetImportFields: SpreadsheetImportFields;
+  // fieldKey -> (normalized label value -> resolved record id), from
+  // resolveSpreadsheetImportRelationMatches. Omit when the import has no
+  // "match or create by name" columns - existing behavior is unaffected either way.
+  relationMatchResolutions?: Map<string, Map<string, string>>;
 };
 
 const buildCompositeFieldRecord = (
@@ -57,6 +61,7 @@ const buildRelationConnectFieldRecord = (
   compositeFieldTransformConfigs: Partial<
     Record<FieldMetadataType, Record<string, ((value: any) => any) | undefined>>
   >,
+  relationMatchResolutions?: Map<string, Map<string, string>>,
 ) => {
   if (fieldMetadataItem.relation?.type !== RelationType.MANY_TO_ONE)
     return undefined;
@@ -69,6 +74,35 @@ const buildRelationConnectFieldRecord = (
   );
 
   if (relationConnectFields.length === 0) return undefined;
+
+  // A "match or create by name" column resolves through a lookup done once for
+  // the whole import (see resolveSpreadsheetImportRelationMatches), not through
+  // the unique-constraint values below - the two mapping modes are mutually
+  // exclusive per relation column, so at most one of these will apply per row.
+  const matchByLabelField = relationConnectFields.find(
+    (field) => field.isRelationMatchByLabelField === true,
+  );
+
+  if (isDefined(matchByLabelField)) {
+    const rawValue = importedStructuredRow[matchByLabelField.key];
+    const normalizedValue =
+      typeof rawValue === 'string'
+        ? rawValue.trim().toLocaleLowerCase()
+        : undefined;
+
+    const resolvedId = isDefined(normalizedValue)
+      ? relationMatchResolutions
+          ?.get(matchByLabelField.key)
+          ?.get(normalizedValue)
+      : undefined;
+
+    // Left unresolved (not found, ambiguous, or resolution wasn't run) - skip
+    // the relation for this row rather than guessing; see the warnings this
+    // import submission collects for what to fix.
+    return isDefined(resolvedId)
+      ? { connect: { where: { id: resolvedId } } }
+      : undefined;
+  }
 
   const relationConnectFieldValue = relationConnectFields.reduce(
     (acc, field) => {
@@ -112,6 +146,7 @@ export const buildRecordFromImportedStructuredRow = ({
   fieldMetadataItems,
   importedStructuredRow,
   spreadsheetImportFields,
+  relationMatchResolutions,
 }: BuildRecordFromImportedStructuredRowArgs) => {
   const stringArrayJSONSchema = z
     .preprocess((value) => {
@@ -336,6 +371,7 @@ export const buildRecordFromImportedStructuredRow = ({
           importedStructuredRow,
           spreadsheetImportFields,
           COMPOSITE_FIELD_TRANSFORM_CONFIGS,
+          relationMatchResolutions,
         );
         if (isDefined(relationConnectFieldValue)) {
           recordToBuild[field.name] = relationConnectFieldValue;
