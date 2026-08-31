@@ -72,9 +72,13 @@ export class AgentChatStreamingService {
   async reapDeadStream({
     thread,
     workspaceId,
+    workspace,
   }: {
     thread: Pick<AgentChatThreadEntity, 'id' | 'activeStreamId'>;
     workspaceId: string;
+    // When provided, a stream that died right after a question was answered is
+    // resumed automatically instead of stranding the recorded answer.
+    workspace?: WorkspaceEntity;
   }): Promise<AgentChatThreadLastStreamError | null> {
     if (!isDefined(thread.activeStreamId)) {
       return null;
@@ -122,7 +126,115 @@ export class AgentChatStreamingService {
       })
       .catch(() => {});
 
+    if (isDefined(workspace)) {
+      await this.resumeOrphanedAnsweredQuestion({
+        threadId: thread.id,
+        workspace,
+      }).catch((error) => {
+        this.logger.warn(
+          `Failed to auto-resume answered question on thread ${thread.id}: ${error.message}`,
+        );
+      });
+    }
+
     return interruptedError;
+  }
+
+  // The answer flow marks the question 'answered' before the resume job runs;
+  // if the worker dies in between, no retry exists (the stream queue never
+  // re-delivers) and the thread is stuck: re-answering is rejected with
+  // QUESTION_NOT_PENDING while no output will ever arrive. Re-enqueue the
+  // resume from the persisted answer; on a second death for the same answer,
+  // fall back to re-opening the question for the user.
+  private async resumeOrphanedAnsweredQuestion({
+    threadId,
+    workspace,
+  }: {
+    threadId: string;
+    workspace: WorkspaceEntity;
+  }): Promise<void> {
+    const orphanedQuestion =
+      await this.agentChatService.findOrphanedAnsweredQuestionPart({
+        threadId,
+        workspaceId: workspace.id,
+      });
+
+    if (!isDefined(orphanedQuestion)) {
+      return;
+    }
+
+    const thread = await this.threadRepository.findOneOrFail(workspace.id, {
+      where: { id: threadId },
+    });
+
+    if (
+      isDefined(thread.pendingQuestionMessageId) ||
+      isDefined(thread.activeStreamId)
+    ) {
+      return;
+    }
+
+    if (orphanedQuestion.hasRecoveryBeenAttempted) {
+      this.logger.warn(
+        `Auto-resume already attempted on thread ${threadId}; re-opening the question for the user`,
+      );
+      await this.agentChatService.restoreAnsweredQuestionToPending({
+        threadId,
+        messageId: orphanedQuestion.messageId,
+        partId: orphanedQuestion.partId,
+        previousOutput: orphanedQuestion.previousOutput,
+        workspaceId: workspace.id,
+      });
+
+      return;
+    }
+
+    await this.agentChatService.markQuestionRecoveryAttempted({
+      partId: orphanedQuestion.partId,
+      previousOutput: orphanedQuestion.previousOutput,
+      workspaceId: workspace.id,
+    });
+
+    const streamId = generateId();
+
+    await this.streamHeartbeatService.markClaimed(streamId);
+
+    const claim = await this.threadRepository.update(
+      workspace.id,
+      { id: threadId, activeStreamId: IsNull() },
+      { activeStreamId: streamId },
+    );
+
+    if ((claim.affected ?? 0) === 0) {
+      await this.streamHeartbeatService.clear(streamId);
+
+      return;
+    }
+
+    this.logger.warn(
+      `Auto-resuming interrupted answered question on thread ${threadId}`,
+    );
+
+    try {
+      await this.enqueueResumeStream({
+        threadId,
+        userWorkspaceId: thread.userWorkspaceId,
+        workspace,
+        turnId: orphanedQuestion.turnId,
+        streamId,
+      });
+    } catch (error) {
+      await this.threadRepository
+        .update(
+          workspace.id,
+          { id: threadId, activeStreamId: streamId },
+          { activeStreamId: null },
+        )
+        .catch(() => {});
+      await this.streamHeartbeatService.clear(streamId);
+
+      throw error;
+    }
   }
 
   private async tryClaimStream({

@@ -103,8 +103,9 @@ export class AgentChatResolver {
   async chatStreamCatchupChunks(
     @Args('threadId', { type: () => UUIDScalarType }) threadId: string,
     @AuthUserWorkspaceId() userWorkspaceId: string,
-    @AuthWorkspace() { id: workspaceId }: WorkspaceEntity,
+    @AuthWorkspace() workspace: WorkspaceEntity,
   ) {
+    const workspaceId = workspace.id;
     const thread = await this.agentChatService.getThreadById({
       threadId,
       userWorkspaceId,
@@ -115,6 +116,7 @@ export class AgentChatResolver {
       await this.agentChatStreamingService.reapDeadStream({
         thread,
         workspaceId,
+        workspace,
       });
 
     if (interruptedError) {

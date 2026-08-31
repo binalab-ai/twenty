@@ -757,6 +757,126 @@ export class AgentChatService {
     };
   }
 
+  // A resume stream that dies before emitting anything leaves the thread's
+  // last message ending with an 'answered' ask_questions part while nothing
+  // will ever consume the answer — a state no user action can repair. This
+  // detects it so the streaming service can recover instead of stranding the
+  // conversation.
+  async findOrphanedAnsweredQuestionPart({
+    threadId,
+    workspaceId,
+  }: {
+    threadId: string;
+    workspaceId: string;
+  }): Promise<{
+    messageId: string;
+    turnId: string | null;
+    partId: string;
+    previousOutput: Record<string, unknown>;
+    hasRecoveryBeenAttempted: boolean;
+  } | null> {
+    const lastMessage = await this.messageRepository.findOne(workspaceId, {
+      where: { threadId },
+      order: { createdAt: 'DESC' },
+      relations: ['parts'],
+    });
+
+    if (!isDefined(lastMessage)) {
+      return null;
+    }
+
+    const orderedParts = [...(lastMessage.parts ?? [])].sort(
+      (partA, partB) => partA.orderIndex - partB.orderIndex,
+    );
+    const lastPart = orderedParts[orderedParts.length - 1];
+
+    if (!isDefined(lastPart) || lastPart.toolName !== ASK_QUESTIONS_TOOL_NAME) {
+      return null;
+    }
+
+    const previousOutput =
+      (lastPart.toolOutput as Record<string, unknown> | null) ?? {};
+    const result = previousOutput.result as
+      | AskQuestionsToolResult
+      | undefined;
+
+    if (result?.status !== 'answered') {
+      return null;
+    }
+
+    return {
+      messageId: lastMessage.id,
+      turnId: lastMessage.turnId,
+      partId: lastPart.id,
+      previousOutput,
+      hasRecoveryBeenAttempted: isDefined(
+        previousOutput.resumeRecoveryAttemptedAt,
+      ),
+    };
+  }
+
+  async markQuestionRecoveryAttempted({
+    partId,
+    previousOutput,
+    workspaceId,
+  }: {
+    partId: string;
+    previousOutput: Record<string, unknown>;
+    workspaceId: string;
+  }): Promise<void> {
+    await this.messagePartRepository.update(
+      workspaceId,
+      { id: partId },
+      {
+        toolOutput: {
+          ...previousOutput,
+          resumeRecoveryAttemptedAt: new Date().toISOString(),
+        },
+      },
+    );
+  }
+
+  // Crash-loop guard fallback: hand the question back to the user as pending
+  // so one click restarts the flow, instead of auto-retrying forever.
+  async restoreAnsweredQuestionToPending({
+    threadId,
+    messageId,
+    partId,
+    previousOutput,
+    workspaceId,
+  }: {
+    threadId: string;
+    messageId: string;
+    partId: string;
+    previousOutput: Record<string, unknown>;
+    workspaceId: string;
+  }): Promise<void> {
+    const previousResult =
+      (previousOutput.result as AskQuestionsToolResult | undefined) ??
+      ({} as AskQuestionsToolResult);
+
+    await this.messagePartRepository.update(
+      workspaceId,
+      { id: partId },
+      {
+        toolOutput: {
+          ...previousOutput,
+          result: {
+            ...previousResult,
+            status: 'pending',
+            answers: undefined,
+          },
+        },
+      },
+    );
+
+    await this.threadRepository.update(
+      workspaceId,
+      { id: threadId },
+      { pendingQuestionMessageId: messageId },
+    );
+  }
+
   async restorePendingQuestion({
     threadId,
     messageId,
