@@ -1,9 +1,13 @@
 import { useApolloCoreClient } from '@/object-metadata/hooks/useApolloCoreClient';
 import { useObjectMetadataItem } from '@/object-metadata/hooks/useObjectMetadataItem';
+import { useObjectMetadataItems } from '@/object-metadata/hooks/useObjectMetadataItems';
 import { useGenerateDepthRecordGqlFieldsFromObject } from '@/object-record/graphql/record-gql-fields/hooks/useGenerateDepthRecordGqlFieldsFromObject';
 import { useBatchCreateManyRecords } from '@/object-record/hooks/useBatchCreateManyRecords';
+import { useObjectPermissions } from '@/object-record/hooks/useObjectPermissions';
 import { useBuildSpreadsheetImportFields } from '@/object-record/spreadsheet-import/hooks/useBuildSpreadSheetImportFields';
 import { buildRecordFromImportedStructuredRow } from '@/object-record/spreadsheet-import/utils/buildRecordFromImportedStructuredRow';
+import { buildSpreadsheetImportRelationMatchWarningMessage } from '@/object-record/spreadsheet-import/utils/buildSpreadsheetImportRelationMatchWarningMessage';
+import { resolveSpreadsheetImportRelationMatches } from '@/object-record/spreadsheet-import/utils/resolveSpreadsheetImportRelationMatches';
 import { spreadsheetImportFilterAvailableFieldMetadataItems } from '@/object-record/spreadsheet-import/utils/spreadsheetImportFilterAvailableFieldMetadataItems';
 import { spreadsheetImportGetUnicityTableHook } from '@/object-record/spreadsheet-import/utils/spreadsheetImportGetUnicityTableHook';
 import { SPREADSHEET_IMPORT_CREATE_RECORDS_BATCH_SIZE } from '@/spreadsheet-import/constants/SpreadsheetImportCreateRecordsBatchSize';
@@ -20,11 +24,14 @@ export const useOpenObjectRecordsSpreadsheetImportDialog = (
   const { openSpreadsheetImportDialog } = useOpenSpreadsheetImportDialog();
   const { buildSpreadsheetImportFields } = useBuildSpreadsheetImportFields();
 
-  const { enqueueErrorSnackBar } = useSnackBar();
+  const { enqueueErrorSnackBar, enqueueWarningSnackBar } = useSnackBar();
 
   const { objectMetadataItem } = useObjectMetadataItem({
     objectNameSingular,
   });
+
+  const { objectMetadataItems } = useObjectMetadataItems();
+  const { objectPermissionsByObjectMetadataId } = useObjectPermissions();
 
   const setSpreadsheetImportCreatedRecordsProgress = useSetAtomState(
     spreadsheetImportCreatedRecordsProgressState,
@@ -63,12 +70,25 @@ export const useOpenObjectRecordsSpreadsheetImportDialog = (
     openSpreadsheetImportDialog({
       ...options,
       onSubmit: async (data) => {
+        // Resolved once for the whole import, ahead of building the per-row payloads below,
+        // so "match or create by name" relation columns only hit the API once per distinct value.
+        const { resolvedIdsByFieldKey, warningsByFieldKey } =
+          await resolveSpreadsheetImportRelationMatches({
+            apolloCoreClient,
+            objectMetadataItems,
+            objectPermissionsByObjectMetadataId,
+            fieldMetadataItems: availableFieldMetadataItemsToImport,
+            spreadsheetImportFields,
+            validStructuredRows: data.validStructuredRows,
+          });
+
         const createInputs = data.validStructuredRows.map((record) => {
           const fieldMapping: Record<string, any> =
             buildRecordFromImportedStructuredRow({
               importedStructuredRow: record,
               fieldMetadataItems: availableFieldMetadataItemsToImport,
               spreadsheetImportFields,
+              relationMatchResolutions: resolvedIdsByFieldKey,
             });
 
           return fieldMapping;
@@ -84,6 +104,15 @@ export const useOpenObjectRecordsSpreadsheetImportDialog = (
               cache.evict({ fieldName: objectMetadataItem.namePlural });
             },
           });
+
+          if (warningsByFieldKey.size > 0) {
+            enqueueWarningSnackBar({
+              message: buildSpreadsheetImportRelationMatchWarningMessage({
+                warningsByFieldKey,
+                spreadsheetImportFields,
+              }),
+            });
+          }
         } catch (error: any) {
           enqueueErrorSnackBar({
             apolloError: error,

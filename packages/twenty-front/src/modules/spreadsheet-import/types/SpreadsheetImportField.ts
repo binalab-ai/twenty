@@ -26,4 +26,13 @@ export type SpreadsheetImportField = {
   isRelationConnectField?: boolean;
   // defined only if isRelationConnectField is true
   uniqueFieldMetadataItem?: FieldMetadataItem;
+  // can be true only if isRelationConnectField is true - resolves the target record
+  // by matching its label field instead of requiring an exact unique-constraint value
+  isRelationMatchByLabelField?: boolean;
+  // defined only if isRelationMatchByLabelField is true - the target object's label
+  // identifier field, matched case-insensitively and trimmed
+  relationMatchLabelFieldMetadataItem?: FieldMetadataItem;
+  // defined only if isRelationMatchByLabelField is true - when no match is found,
+  // create the target record from the label value instead of leaving the relation empty
+  relationMatchAllowCreateOnNoMatch?: boolean;
 };
