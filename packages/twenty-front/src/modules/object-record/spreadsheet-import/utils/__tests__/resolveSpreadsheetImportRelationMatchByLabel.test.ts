@@ -75,9 +75,7 @@ describe('resolveSpreadsheetImportRelationMatchByLabel', () => {
       values: ['  ACME corp  '],
     });
 
-    expect(result.resolvedIdByNormalizedValue.get('acme corp')).toBe(
-      'acme-id',
-    );
+    expect(result.resolvedIdByNormalizedValue.get('acme corp')).toBe('acme-id');
     expect(result.warnings).toEqual([]);
   });
 
@@ -145,9 +143,7 @@ describe('resolveSpreadsheetImportRelationMatchByLabel', () => {
     });
 
     expect(mutateImplementation).toHaveBeenCalledTimes(1);
-    expect(result.resolvedIdByNormalizedValue.get('new co')).toBe(
-      'created-id',
-    );
+    expect(result.resolvedIdByNormalizedValue.get('new co')).toBe('created-id');
     expect(result.warnings).toEqual([]);
   });
 

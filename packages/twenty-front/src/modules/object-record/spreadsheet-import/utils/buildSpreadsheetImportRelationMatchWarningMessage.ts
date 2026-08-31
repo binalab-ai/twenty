@@ -30,9 +30,7 @@ export const buildSpreadsheetImportRelationMatchWarningMessage = ({
 
       const reasonSummaries: string[] = [];
       if (notFoundCount > 0) {
-        reasonSummaries.push(
-          `${notFoundCount} ${t`not found`}`,
-        );
+        reasonSummaries.push(`${notFoundCount} ${t`not found`}`);
       }
       if (multipleMatchesCount > 0) {
         reasonSummaries.push(

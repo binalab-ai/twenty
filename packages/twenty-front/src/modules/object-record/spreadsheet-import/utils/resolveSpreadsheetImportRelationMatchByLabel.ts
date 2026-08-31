@@ -147,14 +147,16 @@ export const resolveSpreadsheetImportRelationMatchByLabel = async ({
     })),
   };
 
-  const result = await apolloCoreClient.query<RecordGqlOperationFindManyResult>({
-    query: findManyRecordsQuery,
-    variables: {
-      filter,
-      limit: SPREADSHEET_IMPORT_RELATION_MATCH_MAX_DISTINCT_VALUES * 2,
+  const result = await apolloCoreClient.query<RecordGqlOperationFindManyResult>(
+    {
+      query: findManyRecordsQuery,
+      variables: {
+        filter,
+        limit: SPREADSHEET_IMPORT_RELATION_MATCH_MAX_DISTINCT_VALUES * 2,
+      },
+      fetchPolicy: 'network-only',
     },
-    fetchPolicy: 'network-only',
-  });
+  );
 
   const edges = result.data?.[targetObjectMetadataItem.namePlural]?.edges ?? [];
 

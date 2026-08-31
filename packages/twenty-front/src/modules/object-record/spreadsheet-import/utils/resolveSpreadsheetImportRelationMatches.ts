@@ -62,7 +62,8 @@ export const resolveSpreadsheetImportRelationMatches = async ({
       sourceFieldMetadataItem?.relation?.targetObjectMetadata.id;
 
     const targetObjectMetadataItem = objectMetadataItems.find(
-      (objectMetadataItem) => objectMetadataItem.id === targetObjectMetadataItemId,
+      (objectMetadataItem) =>
+        objectMetadataItem.id === targetObjectMetadataItemId,
     );
 
     const labelFieldName =
@@ -88,7 +89,10 @@ export const resolveSpreadsheetImportRelationMatches = async ({
         values: values.filter(isDefined),
       });
 
-    resolvedIdsByFieldKey.set(matchByLabelField.key, resolvedIdByNormalizedValue);
+    resolvedIdsByFieldKey.set(
+      matchByLabelField.key,
+      resolvedIdByNormalizedValue,
+    );
     if (warnings.length > 0) {
       warningsByFieldKey.set(matchByLabelField.key, warnings);
     }

@@ -53,7 +53,9 @@ describe('resolveSpreadsheetImportRelationMatches', () => {
       validStructuredRows: [{ company: 'Acme' }],
     });
 
-    expect(mockResolveSpreadsheetImportRelationMatchByLabel).not.toHaveBeenCalled();
+    expect(
+      mockResolveSpreadsheetImportRelationMatchByLabel,
+    ).not.toHaveBeenCalled();
     expect(result.resolvedIdsByFieldKey.size).toBe(0);
     expect(result.warningsByFieldKey.size).toBe(0);
   });
@@ -79,9 +81,9 @@ describe('resolveSpreadsheetImportRelationMatches', () => {
       validStructuredRows,
     });
 
-    expect(mockResolveSpreadsheetImportRelationMatchByLabel).toHaveBeenCalledTimes(
-      1,
-    );
+    expect(
+      mockResolveSpreadsheetImportRelationMatchByLabel,
+    ).toHaveBeenCalledTimes(1);
     expect(
       mockResolveSpreadsheetImportRelationMatchByLabel.mock.calls[0][0].values,
     ).toEqual(['Acme Corp', 'Acme Corp', 'Unknown Co']);
@@ -110,7 +112,9 @@ describe('resolveSpreadsheetImportRelationMatches', () => {
       validStructuredRows: [{}],
     });
 
-    expect(mockResolveSpreadsheetImportRelationMatchByLabel).not.toHaveBeenCalled();
+    expect(
+      mockResolveSpreadsheetImportRelationMatchByLabel,
+    ).not.toHaveBeenCalled();
     expect(result.resolvedIdsByFieldKey.size).toBe(0);
   });
 });

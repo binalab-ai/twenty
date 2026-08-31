@@ -288,7 +288,8 @@ export const useBuildSpreadsheetImportFields = () => {
       }
 
       const labelFieldMetadataItem = targetObjectMetadataItem.fields.find(
-        (field) => field.id === targetObjectMetadataItem.labelIdentifierFieldMetadataId,
+        (field) =>
+          field.id === targetObjectMetadataItem.labelIdentifierFieldMetadataId,
       );
 
       // Only offer "match or create by name" for a plain text label field - a

@@ -86,7 +86,9 @@ const buildRelationConnectFieldRecord = (
   if (isDefined(matchByLabelField)) {
     const rawValue = importedStructuredRow[matchByLabelField.key];
     const normalizedValue =
-      typeof rawValue === 'string' ? rawValue.trim().toLocaleLowerCase() : undefined;
+      typeof rawValue === 'string'
+        ? rawValue.trim().toLocaleLowerCase()
+        : undefined;
 
     const resolvedId = isDefined(normalizedValue)
       ? relationMatchResolutions
