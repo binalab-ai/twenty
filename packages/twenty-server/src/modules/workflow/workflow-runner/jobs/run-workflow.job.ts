@@ -1,6 +1,10 @@
 import { Logger, Scope } from '@nestjs/common';
 
 import { isDefined } from 'twenty-shared/utils';
+import {
+  StepStatus,
+  type WorkflowRunStepInfo,
+} from 'twenty-shared/workflow';
 
 import { Process } from 'src/engine/core-modules/message-queue/decorators/process.decorator';
 import { Processor } from 'src/engine/core-modules/message-queue/decorators/processor.decorator';
@@ -12,6 +16,7 @@ import { buildSystemAuthContext } from 'src/engine/twenty-orm/utils/build-system
 import { WorkflowRunStatus } from 'src/modules/workflow/common/standard-objects/workflow-run.workspace-entity';
 import { WorkflowCommonWorkspaceService } from 'src/modules/workflow/common/workspace-services/workflow-common.workspace-service';
 import { CodeStepBuildService } from 'src/modules/workflow/workflow-builder/workflow-version-step/code-step/services/code-step-build.service';
+import { isWorkflowIteratorAction } from 'src/modules/workflow/workflow-executor/workflow-actions/iterator/guards/is-workflow-iterator-action.guard';
 import { WorkflowExecutorWorkspaceService } from 'src/modules/workflow/workflow-executor/workspace-services/workflow-executor.workspace-service';
 import { RUN_WORKFLOW_JOB_NAME } from 'src/modules/workflow/workflow-runner/constants/run-workflow-job-name';
 import {
@@ -98,6 +103,17 @@ export class RunWorkflowJob {
       workflowRun.status !== WorkflowRunStatus.ENQUEUED &&
       workflowRun.status !== WorkflowRunStatus.NOT_STARTED
     ) {
+      // A start job re-delivered for a RUNNING run means the previous worker
+      // died mid-execution (BullMQ stalled re-delivery). Returning here would
+      // strand the run at RUNNING forever, so recover the in-flight steps
+      // instead of abandoning them.
+      if (workflowRun.status === WorkflowRunStatus.RUNNING) {
+        await this.recoverInFlightExecution({
+          workflowRunId,
+          workspaceId,
+        });
+      }
+
       return;
     }
 
@@ -133,6 +149,79 @@ export class RunWorkflowJob {
 
     await this.workflowExecutorWorkspaceService.executeFromSteps({
       stepIds,
+      workflowRunId,
+      workspaceId,
+    });
+  }
+
+  // A worker that dies mid-run (OOM, deploy, restart) leaves steps at RUNNING
+  // with no job to finish them; BullMQ re-delivers the start job once, which
+  // used to no-op. Re-executing the in-flight steps lets the re-delivery
+  // resume the run instead of stranding it at RUNNING until the staled-runs
+  // cron fails it an hour later.
+  private async recoverInFlightExecution({
+    workflowRunId,
+    workspaceId,
+  }: {
+    workflowRunId: string;
+    workspaceId: string;
+  }): Promise<void> {
+    const workflowRun =
+      await this.workflowRunWorkspaceService.getWorkflowRunOrFail({
+        workflowRunId,
+        workspaceId,
+      });
+
+    const stepInfos = workflowRun.state?.stepInfos ?? {};
+    const steps = workflowRun.state?.flow?.steps ?? [];
+
+    const inFlightSteps = steps.filter(
+      (step) => stepInfos[step.id]?.status === StepStatus.RUNNING,
+    );
+
+    if (inFlightSteps.length === 0) {
+      return;
+    }
+
+    this.logger.warn(
+      `Recovering ${inFlightSteps.length} in-flight step(s) of stalled workflow run ${workflowRunId}`,
+    );
+
+    // Iterators recompute their position themselves; other steps must go back
+    // to NOT_STARTED or shouldExecuteStep refuses to run them again.
+    const stepInfosToReset = inFlightSteps
+      .filter((step) => !isWorkflowIteratorAction(step))
+      .reduce<Record<string, WorkflowRunStepInfo>>((acc, step) => {
+        const stepInfo = stepInfos[step.id];
+
+        acc[step.id] = {
+          ...stepInfo,
+          status: StepStatus.NOT_STARTED,
+          result: undefined,
+          error: undefined,
+          history: [
+            ...(stepInfo?.history ?? []),
+            {
+              result: stepInfo?.result,
+              error: stepInfo?.error,
+              status: stepInfo?.status,
+            },
+          ],
+        };
+
+        return acc;
+      }, {});
+
+    if (Object.keys(stepInfosToReset).length > 0) {
+      await this.workflowRunWorkspaceService.updateWorkflowRunStepInfos({
+        stepInfos: stepInfosToReset,
+        workflowRunId,
+        workspaceId,
+      });
+    }
+
+    await this.workflowExecutorWorkspaceService.executeFromSteps({
+      stepIds: inFlightSteps.map((step) => step.id),
       workflowRunId,
       workspaceId,
     });

@@ -125,7 +125,10 @@ export const MESSAGE_QUEUE_WORKER_CONFIG: Record<
     priority: 2,
     workerOptions: {
       concurrency: 1,
-      lockDuration: 30_000,
+      // AI agent steps run inside the workflow job and can hold it for
+      // minutes; a short lock turns CPU/GC pauses into false stalled
+      // re-deliveries (same reasoning as aiStreamQueue below).
+      lockDuration: 600_000,
       maxStalledCount: 1,
       boundedShutdownDrain: false,
     },

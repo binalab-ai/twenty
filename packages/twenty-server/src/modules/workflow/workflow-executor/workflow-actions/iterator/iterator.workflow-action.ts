@@ -83,9 +83,12 @@ export class IteratorWorkflowAction implements WorkflowActionInterface {
     const existingIteratorStepResult = stepInfos[iteratorStepId]
       ?.result as WorkflowIteratorResult;
 
+    // After a crash recovery the reset may have wiped the result; history
+    // grows by one entry per completed iteration, so it restores the position
+    // instead of restarting the loop from the first item.
     const currentItemIndex = isDefined(existingIteratorStepResult)
       ? existingIteratorStepResult.currentItemIndex + 1
-      : 0;
+      : (stepInfos[iteratorStepId]?.history?.length ?? 0);
 
     if (currentItemIndex >= MAX_ITERATIONS) {
       throw new WorkflowStepExecutorException(
