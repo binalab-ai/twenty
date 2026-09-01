@@ -479,6 +479,10 @@ export class ChatExecutionService {
 
     const stream = streamText({
       model: registeredModel.model,
+      maxOutputTokens: Math.min(
+        modelConfig.maxOutputTokens,
+        AGENT_CONFIG.MAX_OUTPUT_TOKENS,
+      ),
       messages: [systemMessage, ...modelMessages],
       tools: activeTools,
       // Every step of the kickoff turn is forced so it cannot end in prose; stopWhen ends it at the first ask_questions.

@@ -378,6 +378,12 @@ export class AgentAsyncExecutorService {
         system: `${baseSystemPrompt}\n\n${agent ? tipTapDocumentToMarkdown(agent.prompt) : ''}${toolCatalogSection}`,
         tools,
         model: registeredModel.model,
+        maxOutputTokens: Math.min(
+          this.aiModelRegistryService.getEffectiveModelConfig(
+            registeredModel.modelId,
+          ).maxOutputTokens,
+          AGENT_CONFIG.MAX_OUTPUT_TOKENS,
+        ),
         messages: messages.map(
           (message): ModelMessage => ({
             role: message.role,
