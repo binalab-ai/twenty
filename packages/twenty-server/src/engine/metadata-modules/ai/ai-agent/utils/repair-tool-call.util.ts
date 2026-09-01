@@ -9,6 +9,7 @@ import {
 } from 'ai';
 import { type z } from 'zod';
 
+import { EXECUTE_TOOL_TOOL_NAME } from 'src/engine/core-modules/tool-provider/tools/execute-tool.tool';
 import { UsageOperationType } from 'src/engine/core-modules/usage/enums/usage-operation-type.enum';
 import { AiBillingService } from 'src/engine/metadata-modules/ai/ai-billing/services/ai-billing.service';
 import { extractCacheCreationTokensFromSteps } from 'src/engine/metadata-modules/ai/ai-billing/utils/extract-cache-creation-tokens.util';
@@ -19,6 +20,48 @@ type ToolCall = {
   toolCallId: string;
   toolName: string;
   input: string;
+};
+
+const redirectUnknownToolCallToExecuteTool = ({
+  toolCall,
+  tools,
+}: {
+  toolCall: ToolCall;
+  tools: Record<string, unknown>;
+}): ToolCall | null => {
+  const canRedirect =
+    EXECUTE_TOOL_TOOL_NAME in tools &&
+    toolCall.toolName !== EXECUTE_TOOL_TOOL_NAME;
+
+  if (!canRedirect) {
+    return null;
+  }
+
+  let parsedInput: unknown;
+
+  try {
+    parsedInput =
+      typeof toolCall.input === 'string'
+        ? JSON.parse(toolCall.input)
+        : toolCall.input;
+  } catch {
+    parsedInput = undefined;
+  }
+
+  const isPlainObject =
+    typeof parsedInput === 'object' &&
+    parsedInput !== null &&
+    !Array.isArray(parsedInput);
+
+  return {
+    type: 'tool-call',
+    toolCallId: toolCall.toolCallId,
+    toolName: EXECUTE_TOOL_TOOL_NAME,
+    input: JSON.stringify({
+      toolName: toolCall.toolName,
+      arguments: isPlainObject ? parsedInput : {},
+    }),
+  };
 };
 
 type RepairToolCallBillingContext = {
@@ -44,9 +87,13 @@ export const repairToolCall = async ({
   model: LanguageModel;
   billingContext?: RepairToolCallBillingContext;
 }): Promise<ToolCall | null> => {
-  // Don't attempt to fix invalid tool names
+  // A hallucinated tool name must not kill the stream (returning null
+  // rethrows and fails the whole turn). Route the call through the
+  // execute_tool meta-tool instead: a learnable tool called as if it were
+  // top-level just runs, and a truly unknown name comes back to the model as
+  // a graceful "not found, did you mean ..." tool result it can recover from.
   if (NoSuchToolError.isInstance(error)) {
-    return null;
+    return redirectUnknownToolCallToExecuteTool({ toolCall, tools });
   }
 
   const tool = tools[toolCall.toolName];
