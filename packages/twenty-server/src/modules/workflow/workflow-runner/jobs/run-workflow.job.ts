@@ -299,11 +299,27 @@ export class RunWorkflowJob {
       isDefined(nextStepIdsToExecute) && nextStepIdsToExecute.length > 0;
 
     if (!hasStepsToSkipOrFailSafely && !hasStepsToExecute) {
-      await this.workflowRunWorkspaceService.endWorkflowRun({
-        workflowRunId,
-        workspaceId,
-        status: WorkflowRunStatus.COMPLETED,
-      });
+      // The chained job can land on a loop-body step whose graph is missing
+      // the explicit loop-back edge; resume its iterator instead of marking
+      // the run COMPLETED mid-loop.
+      const hasResumedEnclosingIterator =
+        await this.workflowExecutorWorkspaceService.resumeQuiescentEnclosingIterator(
+          {
+            deadEndStepId: lastExecutedStepId,
+            workflowRunId,
+            workspaceId,
+            shouldComputeWorkflowRunStatus: true,
+            executedStepsCount: 0,
+          },
+        );
+
+      if (!hasResumedEnclosingIterator) {
+        await this.workflowRunWorkspaceService.endWorkflowRun({
+          workflowRunId,
+          workspaceId,
+          status: WorkflowRunStatus.COMPLETED,
+        });
+      }
 
       return;
     }

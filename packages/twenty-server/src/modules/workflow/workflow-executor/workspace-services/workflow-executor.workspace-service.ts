@@ -44,7 +44,9 @@ import { workflowShouldKeepRunning } from 'src/modules/workflow/workflow-executo
 import { isWorkflowIfElseAction } from 'src/modules/workflow/workflow-executor/workflow-actions/if-else/guards/is-workflow-if-else-action.guard';
 import { getNextStepIdsForIfElse } from 'src/modules/workflow/workflow-executor/workflow-actions/if-else/utils/get-next-step-ids-for-if-else.util';
 import { isWorkflowIteratorAction } from 'src/modules/workflow/workflow-executor/workflow-actions/iterator/guards/is-workflow-iterator-action.guard';
+import { findEnclosingIterator } from 'src/modules/workflow/workflow-executor/workflow-actions/iterator/utils/find-enclosing-iterator.util';
 import { findEnclosingIteratorWithContinueOnFailure } from 'src/modules/workflow/workflow-executor/workflow-actions/iterator/utils/find-enclosing-iterator-with-continue-on-failure.util';
+import { getAllStepIdsInLoop } from 'src/modules/workflow/workflow-executor/workflow-actions/iterator/utils/get-all-step-ids-in-loop.util';
 import { getNextStepIdsForIterator } from 'src/modules/workflow/workflow-executor/workflow-actions/iterator/utils/get-next-step-ids-for-iterator.util';
 import { WorkflowAction } from 'src/modules/workflow/workflow-executor/workflow-actions/types/workflow-action.type';
 import { RUN_WORKFLOW_JOB_NAME } from 'src/modules/workflow/workflow-runner/constants/run-workflow-job-name';
@@ -237,7 +239,95 @@ export class WorkflowExecutorWorkspaceService {
         shouldComputeWorkflowRunStatus: false,
         executedStepsCount: (executedStepsCount ?? 0) + 1,
       });
+
+      return;
     }
+
+    // A loop-body step can dead-end here when its graph is missing the
+    // explicit edge back to the iterator (the canvas draws the loop from
+    // initialLoopStepIds alone, so builders - the AI chat among them - omit
+    // it). Without a loop-back the iterator stays RUNNING forever and the
+    // run never ends; route execution back to it instead.
+    if (
+      !isDefined(nextStepIdsToSkip) &&
+      !isDefined(nextStepIdsToFailSafely) &&
+      !actionOutput.shouldEndWorkflowRun
+    ) {
+      await this.resumeQuiescentEnclosingIterator({
+        deadEndStepId: stepId,
+        workflowRunId,
+        workspaceId,
+        shouldComputeWorkflowRunStatus: false,
+        executedStepsCount: (executedStepsCount ?? 0) + 1,
+      });
+    }
+  }
+
+  // Re-executes the iterator enclosing a dead-ending loop-body step, but only
+  // when the whole loop is quiescent (no step still RUNNING or PENDING) -
+  // the same barrier an explicit loop-back edge gets from the
+  // all-parents-terminal check in shouldExecuteIteratorStep.
+  async resumeQuiescentEnclosingIterator({
+    deadEndStepId,
+    workflowRunId,
+    workspaceId,
+    shouldComputeWorkflowRunStatus,
+    executedStepsCount,
+  }: {
+    deadEndStepId: string;
+    workflowRunId: string;
+    workspaceId: string;
+    shouldComputeWorkflowRunStatus: boolean;
+    executedStepsCount: number;
+  }): Promise<boolean> {
+    const workflowRun =
+      await this.workflowRunWorkspaceService.getWorkflowRunOrFail({
+        workflowRunId,
+        workspaceId,
+      });
+
+    const steps = workflowRun.state.flow.steps;
+    const stepInfos = workflowRun.state.stepInfos;
+
+    const enclosingIterator = findEnclosingIterator({
+      stepId: deadEndStepId,
+      steps,
+    });
+
+    if (!isDefined(enclosingIterator)) {
+      return false;
+    }
+
+    if (stepInfos[enclosingIterator.id]?.status !== StepStatus.RUNNING) {
+      return false;
+    }
+
+    const loopStepIds = getAllStepIdsInLoop({
+      iteratorStepId: enclosingIterator.id,
+      initialLoopStepIds:
+        enclosingIterator.settings.input.initialLoopStepIds ?? [],
+      steps,
+    });
+
+    const loopHasActiveStep = loopStepIds.some((loopStepId) =>
+      [StepStatus.RUNNING, StepStatus.PENDING].includes(
+        stepInfos[loopStepId]?.status,
+      ),
+    );
+
+    if (loopHasActiveStep) {
+      return false;
+    }
+
+    await this.executeFromSteps({
+      stepIds: [enclosingIterator.id],
+      workflowRunId,
+      workspaceId,
+      shouldComputeWorkflowRunStatus,
+      executedStepsCount,
+    });
+
+    return true;
   }
 
   async getNextStepIdsToExecute({
@@ -591,6 +681,31 @@ export class WorkflowExecutorWorkspaceService {
         shouldComputeWorkflowRunStatus: false,
         executedStepsCount,
       });
+
+      return;
+    }
+
+    // A skip/fail-safely cascade that reaches loop-body leaves missing their
+    // loop-back edge would otherwise strand the iterator at RUNNING; give the
+    // loop the same implicit loop-back as the success path.
+    if (
+      cascadedStepIdsToSkip.length === 0 &&
+      cascadedStepIdsToFailSafely.length === 0
+    ) {
+      for (const stepId of [...stepIdsToSkip, ...stepIdsToFailSafely]) {
+        const hasResumedEnclosingIterator =
+          await this.resumeQuiescentEnclosingIterator({
+            deadEndStepId: stepId,
+            workflowRunId,
+            workspaceId,
+            shouldComputeWorkflowRunStatus: false,
+            executedStepsCount,
+          });
+
+        if (hasResumedEnclosingIterator) {
+          return;
+        }
+      }
     }
   }
 
